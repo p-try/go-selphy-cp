@@ -2,7 +2,7 @@ This is a fork of this bzr repository http://wilmer.gaa.st/selphy/ from Wilmer v
 
 It's basically a Go program to send pictures to a Canon Selphy CP900 printer connected via wifi. This at least lets you print from OSX because Canon does not provide drivers for latest versions the Apple OS.
 
-Check the [original README](README.old) for more info about it.
+Check the [original README](docs/README-wilmer.md) for more info about it.
 
 I added the binary for Yosemite in case you don't want to build it yourself.
 
