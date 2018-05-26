@@ -35,11 +35,11 @@ import (
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
+	"log"
 	"net"
 	"os"
 	"os/user"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -86,6 +86,7 @@ type device struct {
 
 	last_status []byte
 	chunk       []byte
+	last_wait   uint
 
 	job *imgreader
 
@@ -150,7 +151,7 @@ func (c *device) wait_udp() {
 	n, err := c.udps.Read(buf[0:])
 	checkError(err)
 	if bytes.Compare(buf[0:4], []byte("CPNP")) != 0 {
-		fmt.Println("UDP protocol error!")
+		log.Println("UDP protocol error!")
 	} else {
 		c.handle_message(buf[0:n])
 	}
@@ -168,7 +169,7 @@ func (c *device) wait_tcp() {
 	}
 
 	if bytes.Compare(c.tcpbuf[0:4], []byte("CPNP")) != 0 {
-		fmt.Println("TCP protocol error!")
+		log.Println("TCP protocol error!")
 		return
 	}
 
@@ -203,17 +204,17 @@ func (c *device) discover_reply(head []byte, body []byte) {
 			mac += fmt.Sprintf(":%02x", body[6+i])
 		}
 		mac = mac[1:]
-		fmt.Println("Found printer with MAC address", mac)
+		log.Println("Found printer with MAC address", mac)
 	} /* else meh? */
 
 	if c.mac != nil && bytes.Compare(c.mac, body[6:12]) != 0 {
-		fmt.Println("Not the MAC address we're looking for, " +
+		log.Println("Not the MAC address we're looking for, " +
 			"waiting for more responses")
 		return
 	}
 
 	var ip net.IP = body[6+body[4] : 6+body[4]+body[5]]
-	fmt.Println("Switching to IP address", ip.String())
+	log.Println("Switching to IP address", ip.String())
 	c.dest.IP = ip
 
 	p := cpnp_packet(CPNP_MSG_ID, []byte{0, 0, 0, 0})
@@ -260,11 +261,10 @@ func (c *device) start_tcp(head []byte, body []byte) {
 	port := binary.BigEndian.Uint16(body[4:])
 	if port == 0 {
 		/* TODO: Throw a big fat error. */
-		fmt.Println("Help! No TCP port to connect to..")
-		return
+		log.Fatalln("Help! No TCP port to connect to..")
 	}
 
-	fmt.Printf("Should connect to TCP %s:%d ... ", c.dest.IP, port)
+	log.Print("Should connect to TCP %s:%d ... ", c.dest.IP, port)
 	c.tcpd = new(net.TCPAddr)
 	c.tcpd.IP = c.dest.IP
 	c.tcpd.Port = int(port)
@@ -272,7 +272,7 @@ func (c *device) start_tcp(head []byte, body []byte) {
 	var e error
 	c.tcps, e = net.DialTCP("tcp", nil, c.tcpd)
 	checkError(e)
-	fmt.Println("Done")
+	log.Println("Done")
 	c.tcpbuf = make([]byte, 0, 51200)
 
 	c.print_poll()
@@ -330,9 +330,6 @@ func (c *device) job_done(head []byte, body []byte) {
 }
 
 func (c *device) print_data_request(head []byte, body []byte) {
-	state := int(body[0x12])
-	fmt.Println("state", state)
-
 	/* It frequently seems to repeat the last status response. */
 	if bytes.Compare(c.last_status, body) == 0 {
 		c.print_poll()
@@ -340,31 +337,39 @@ func (c *device) print_data_request(head []byte, body []byte) {
 	}
 	c.last_status = body
 
+	state := int(body[0x12])
+
 	switch state {
 	case 0x00:
 		/* Wait */
-		if len(c.chunk) == 0 {
-			time.Sleep(1 * time.Second)
+		if c.last_wait == 0 {
+			c.last_wait = 50
 		} else {
-			time.Sleep(100 * time.Millisecond)
+			c.last_wait = c.last_wait * 2
+			if c.last_wait > 2000 {
+				c.last_wait = 2000
+			}
 		}
+		time.Sleep(time.Duration(c.last_wait) * time.Millisecond)
 		c.print_poll()
 	case 0x01:
 		/* Job flags */
-		fmt.Println("Sending flags")
+		c.last_wait = 0
+		log.Println("Sending flags")
 		c.send_flags()
 	case 0x02:
 		/* File data request */
+		c.last_wait = 0
 		offset := binary.LittleEndian.Uint32(body[0x18:])
 		length := binary.LittleEndian.Uint32(body[0x1c:])
-		fmt.Println("Will send", length, "bytes starting from", offset)
+		log.Println("Will send", length, "bytes starting from", offset)
 
 		/* Save the whole chunk and have it sent in 4KB steps. */
 		c.chunk = c.job.get_chunk(offset, length)
 		c.send_chunk()
 	case 0x03:
 		/* DONE! */
-		fmt.Println("Job done, closing connection.")
+		log.Println("Job done, closing connection.")
 
 		b := make([]byte, 0x40)
 		binary.LittleEndian.PutUint32(b[0x04:], uint32(len(b)))
@@ -400,7 +405,7 @@ func new_imgreader(fn string) *imgreader {
 
 	cfg, f, e := image.DecodeConfig(r.fp)
 	checkError(e)
-	fmt.Printf("File %s, %s file, %d bytes, %d×%d\n", fn, f, r.fsize, cfg.Width, cfg.Height)
+	log.Printf("File %s, %s file, %d bytes, %d×%d\n", fn, f, r.fsize, cfg.Width, cfg.Height)
 
 	r.w = cfg.Width
 	r.h = cfg.Height
@@ -466,15 +471,15 @@ func (p *printer) start() {
 }
 
 func (p *printer) start_job() {
-	fmt.Println("It's a", p.dev.props["DES"])
+	log.Println("It's a", p.dev.props["DES"])
 
 	if len(p.jobs) == 0 {
-		fmt.Println("Ran out of stuff to do, exiting")
+		log.Println("Ran out of stuff to do, exiting")
 		os.Exit(0)
 	}
 
 	job := p.jobs[0]
-	fmt.Println("Will send", job.fn)
+	log.Println("Will send", job.fn)
 	p.dev.start_job(job)
 	p.jobs = p.jobs[1:]
 }
@@ -500,8 +505,6 @@ func main() {
 
 func checkError(err error) {
 	if err != nil {
-		_, file, line, _ := runtime.Caller(1)
-		fmt.Fprintln(os.Stderr, "Fatal error at ", file, "line", line, err.Error())
-		os.Exit(1)
+		log.Panicln("Fatal error ", err.Error())
 	}
 }
