@@ -59,12 +59,11 @@ const (
 type cmd_handler func(head []byte, body []byte)
 
 func cpnp_packet(command int, payload []byte) []byte {
-	ret := make([]byte, 16, 10240)
+	ret := make([]byte, 16+len(payload))
 
 	copy(ret[0:], []byte("CPNP"))
 	binary.BigEndian.PutUint16(ret[4:], uint16(command))
 	binary.BigEndian.PutUint16(ret[14:], uint16(len(payload)))
-	ret = ret[:len(ret)+len(payload)]
 	copy(ret[16:], payload)
 
 	return ret
@@ -334,10 +333,8 @@ func (c *device) print_data_request(head []byte, body []byte) {
 	state := int(body[0x12])
 	fmt.Println("state", state)
 
-	/* It frequently seems to repeat the last status response, I suppose
-	   that means it's still processing. Give it half a second. */
+	/* It frequently seems to repeat the last status response. */
 	if bytes.Compare(c.last_status, body) == 0 {
-		time.Sleep(200 * time.Millisecond)
 		c.print_poll()
 		return
 	}
@@ -346,7 +343,11 @@ func (c *device) print_data_request(head []byte, body []byte) {
 	switch state {
 	case 0x00:
 		/* Wait */
-		time.Sleep(500 * time.Millisecond)
+		if len(c.chunk) == 0 {
+			time.Sleep(1 * time.Second)
+		} else {
+			time.Sleep(100 * time.Millisecond)
+		}
 		c.print_poll()
 	case 0x01:
 		/* Job flags */
