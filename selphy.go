@@ -93,6 +93,8 @@ type device struct {
 
 	job *imgreader
 
+	running bool
+
 	cb func()
 	progress_cb func(uint16)
 }
@@ -141,7 +143,7 @@ func (c *device) send(msg []byte, h cmd_handler) {
 }
 
 func (c *device) wait() {
-	for {
+	for c.running {
 		if c.tcps != nil {
 			c.wait_tcp()
 		} else {
@@ -470,6 +472,7 @@ func (p *printer) add_job(job *imgreader) {
 }
 
 func (p *printer) start() {
+	p.dev.running = true
 	p.dev.discover(p.start_job)
 	p.dev.wait()
 }
@@ -479,7 +482,8 @@ func (p *printer) start_job() {
 
 	if len(p.jobs) == 0 {
 		log.Println("Ran out of stuff to do, exiting")
-		os.Exit(0)
+		p.dev.running = false
+		//os.Exit(0)
 	}
 
 	job := p.jobs[0]
