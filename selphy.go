@@ -149,6 +149,7 @@ func (c *device) wait() {
 func (c *device) wait_udp() {
 	buf := make([]byte, 5120, 5120)
 	n, err := c.udps.Read(buf[0:])
+	log.Println("Read UDP")
 	checkError(err)
 	if bytes.Compare(buf[0:4], []byte("CPNP")) != 0 {
 		log.Println("UDP protocol error!")
@@ -193,7 +194,9 @@ func (c *device) handle_message(buf []byte) {
 
 func (c *device) discover(cb func()) {
 	c.cb = cb
+	log.Println("Trying to connect to IP: ", c.dest)
 	p := cpnp_packet(CPNP_MSG_DISCOVER, []byte{})
+	c.udps.SetReadDeadline(time.Now().Add(time.Second * 2))
 	c.send(p, c.discover_reply)
 }
 
@@ -506,5 +509,6 @@ func main() {
 func checkError(err error) {
 	if err != nil {
 		log.Panicln("Fatal error ", err.Error())
+		os.Exit(1)
 	}
 }
