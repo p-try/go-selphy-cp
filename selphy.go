@@ -30,7 +30,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
-	"flag"
 	"fmt"
 	"image"
 	_ "image/jpeg"
@@ -43,6 +42,7 @@ import (
 	"strings"
 	"time"
 	"unicode/utf16"
+	"C"
 )
 
 const (
@@ -57,6 +57,9 @@ const (
 )
 
 type cmd_handler func(head []byte, body []byte)
+
+//export progress_handler
+type progress_handler func(progress uint16)
 
 func cpnp_packet(command int, payload []byte) []byte {
 	ret := make([]byte, 16+len(payload))
@@ -90,7 +93,10 @@ type device struct {
 
 	job *imgreader
 
+	running bool
+
 	cb func()
+	progress_cb func(uint16)
 }
 
 func new_device(printer_mac, printer_ip *string) *device {
@@ -137,7 +143,7 @@ func (c *device) send(msg []byte, h cmd_handler) {
 }
 
 func (c *device) wait() {
-	for {
+	for c.running {
 		if c.tcps != nil {
 			c.wait_tcp()
 		} else {
@@ -469,6 +475,7 @@ func (p *printer) add_job(job *imgreader) {
 }
 
 func (p *printer) start() {
+	p.dev.running = true
 	p.dev.discover(p.start_job)
 	p.dev.wait()
 }
@@ -478,7 +485,8 @@ func (p *printer) start_job() {
 
 	if len(p.jobs) == 0 {
 		log.Println("Ran out of stuff to do, exiting")
-		os.Exit(0)
+		p.dev.running = false
+		//os.Exit(0)
 	}
 
 	job := p.jobs[0]
@@ -488,6 +496,7 @@ func (p *printer) start_job() {
 }
 
 func main() {
+	/*
 	printer_mac := flag.String("printer_mac", "", "MAC address of printer")
 	printer_ip := flag.String("printer_ip", CPNP_ADDR, "IP addres of printer")
 	border := flag.Bool("border", false, "Allow white borders, don't crop")
@@ -503,8 +512,27 @@ func main() {
 	p.dev = new_device(printer_mac, printer_ip)
 	p.start()
 
-	os.Exit(0)
+	os.Exit(0)*/
 }
+
+//export print
+func print(filename *C.char, ip *C.char, handler progress_handler) C.int {
+	p := new_printer()
+	log.Println("libselphy: Created device")
+	job := new_imgreader(C.GoString(filename))
+	job.border = false
+	p.add_job(job)
+
+  go_ip := C.GoString(ip)
+	go_mac := ""
+
+	p.dev = new_device(&go_mac, &go_ip)
+	p.dev.progress_cb = handler
+	p.start()
+
+	return 0
+}
+
 
 func checkError(err error) {
 	if err != nil {
