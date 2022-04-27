@@ -35,6 +35,7 @@ import (
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -140,8 +141,10 @@ func (c *device) wait() {
 	for {
 		if c.tcps != nil {
 			c.wait_tcp()
-		} else {
+		} else if c.udps != nil {
 			c.wait_udp()
+		} else {
+			break
 		}
 	}
 }
@@ -151,6 +154,11 @@ func (c *device) wait_udp() {
 	n, err := c.udps.Read(buf[0:])
 	log.Println("Read UDP")
 	checkError(err)
+	if err != nil {
+		c.udps.Close()
+		c.udps = nil
+		return
+	}
 	if bytes.Compare(buf[0:4], []byte("CPNP")) != 0 {
 		log.Println("UDP protocol error!")
 	} else {
@@ -161,6 +169,12 @@ func (c *device) wait_udp() {
 func (c *device) wait_tcp() {
 	buf := make([]byte, 5120, 5120)
 	n, err := c.tcps.Read(buf[0:])
+	if err != nil && err == io.EOF {
+		c.tcps.Close()
+		c.tcpd = nil
+		c.tcps = nil
+		return
+	}
 	checkError(err)
 	c.tcpbuf = c.tcpbuf[0 : len(c.tcpbuf)+n]
 	copy(c.tcpbuf[len(c.tcpbuf)-n:], buf[0:n])
@@ -503,7 +517,7 @@ func main() {
 	p.dev = new_device(printer_mac, printer_ip)
 	p.start()
 
-	os.Exit(0)
+	// os.Exit(0)
 }
 
 func SelphyPrint(printer_mac string, printer_ip string, file string) {
@@ -519,7 +533,7 @@ func SelphyPrint(printer_mac string, printer_ip string, file string) {
 
 func checkError(err error) {
 	if err != nil {
-		log.Panicln("Fatal error ", err.Error())
-		os.Exit(1)
+		log.Println("Fatal error ", err.Error())
+		//os.Exit(1)
 	}
 }
